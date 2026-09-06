@@ -12,21 +12,39 @@ set -e
 
 echo "== Jarvis for Android: bootstrap =="
 
+# Which proot distro to use. Already installed under a custom name?
+# Run the script as:  DISTRO=yourname bash setup-android.sh
+DISTRO="${DISTRO:-ubuntu}"
+
 # --- Termux packages ---
-echo "-- updating Termux packages"
-pkg update -y && pkg upgrade -y
+# Non-interactive and forgiving: an existing Termux install can fail the
+# upgrade step for reasons that do not matter here, and dpkg config prompts
+# would hang the script forever.
+export DEBIAN_FRONTEND=noninteractive
+pkg update -y || true
+pkg upgrade -y || true
 pkg install -y proot-distro
 
 # --- Ubuntu under proot (real glibc, so the Claude Code binary runs) ---
-if [ ! -d "$HOME/../usr/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
-  echo "-- installing Ubuntu (about 300 MB, one time)"
-  proot-distro install ubuntu
+# Already have it? It is used AS-IS: nothing is removed, reset, or reinstalled.
+if [ -d "$HOME/../usr/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
+  echo "-- found your existing $DISTRO — using it as-is"
+else
+  echo "-- installing $DISTRO (about 300 MB, one time)"
+  proot-distro install "$DISTRO"
 fi
+proot-distro login "$DISTRO" -- true 2>/dev/null || {
+  echo "ERROR: proot distro '$DISTRO' is not usable."
+  echo "If your Ubuntu lives under a different name, run:"
+  echo "  DISTRO=<name> bash setup-android.sh"
+  exit 1
+}
 
 # --- the inner script that runs inside Ubuntu ---
 cat > "$HOME/jarvis-inner.sh" <<'INNER'
 #!/bin/bash
 set -e
+export DEBIAN_FRONTEND=noninteractive
 echo "== Jarvis for Android: Ubuntu side =="
 
 apt-get update -y
@@ -143,7 +161,7 @@ INNER
 # --- run the inner script inside Ubuntu ---
 # Termux's home is bound at its absolute path inside proot, so the full
 # path reaches the file; ~ inside the distro is /root, not Termux home.
-proot-distro login ubuntu -- bash "/data/data/com.termux/files/home/jarvis-inner.sh"
+proot-distro login "$DISTRO" -- bash "/data/data/com.termux/files/home/jarvis-inner.sh"
 
 # --- Termux-side launchers: type `jarvis` or `jarvis-face` in Termux ---
 mkdir -p "$HOME/bin"
