@@ -29,24 +29,23 @@ pkg upgrade -y || true
 pkg install -y proot-distro termux-api jq
 
 # --- Find the Ubuntu: use what exists, never reinstall over it ---
-# Detection order: a proot-distro Ubuntu (exact name, then any ubuntu-*
-# alias), then the older ubuntu-fs style rootfs (AnLinux / ubuntu-in-termux
-# installers), and only if nothing exists, a fresh proot-distro install.
+# proot-distro names its installs with versioned aliases too (ubuntu,
+# ubuntu-22.04, ubuntu-24.04, older ubuntu-20.04 style), so the check
+# globs rather than guessing one exact name. No list parsing: it broke
+# on real devices. $PREFIX is Termux's own root and always correct.
 MODE=""
-if [ -n "$DISTRO" ] && [ -d "$HOME/../usr/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
+ROOTFS_DIR="$PREFIX/var/lib/proot-distro/installed-rootfs"
+if [ -n "$DISTRO" ] && [ -d "$ROOTFS_DIR/$DISTRO" ]; then
   MODE="proot-distro:$DISTRO"
   echo "-- found your existing proot-distro '$DISTRO' — using it as-is"
-elif [ -d "$HOME/../usr/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
-  MODE="proot-distro:ubuntu"
-  echo "-- found your existing proot-distro ubuntu — using it as-is"
 else
-  ALIAS=$(proot-distro list 2>/dev/null | awk '
-    /^[A-Za-z0-9._-]+$/ {name=$1; next}
-    tolower($0) ~ /installed/ && tolower($0) !~ /not installed/ && tolower(name) ~ /ubuntu/ {print name; exit}')
-  if [ -n "$ALIAS" ]; then
-    MODE="proot-distro:$ALIAS"
-    echo "-- found your existing proot-distro '$ALIAS' — using it as-is"
-  fi
+  for d in "$ROOTFS_DIR"/ubuntu*; do
+    if [ -d "$d" ]; then
+      MODE="proot-distro:$(basename "$d")"
+      echo "-- found your existing proot-distro '$(basename "$d")' — using it as-is"
+      break
+    fi
+  done
 fi
 if [ -z "$MODE" ]; then
   for d in "$HOME"/*-fs "$PREFIX/ubuntu-fs"; do
@@ -59,8 +58,16 @@ if [ -z "$MODE" ]; then
 fi
 if [ -z "$MODE" ]; then
   echo "-- no Ubuntu found. Installing one (about 300 MB, one time)"
-  proot-distro install ubuntu
-  MODE="proot-distro:ubuntu"
+  if OUT=$(proot-distro install ubuntu 2>&1); then
+    MODE="proot-distro:ubuntu"
+  elif printf '%s' "$OUT" | grep -qi "already installed"; then
+    MODE="proot-distro:ubuntu"
+    echo "-- Ubuntu was already installed — using it as-is"
+  else
+    printf '%s\n' "$OUT"
+    echo "ERROR: the Ubuntu install failed. Check your connection and re-run."
+    exit 1
+  fi
 fi
 echo "$MODE" > "$HOME/.jarvis-mode"
 
