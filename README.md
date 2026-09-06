@@ -19,7 +19,7 @@ The Android port of the fullstack-agent stack: your Jarvis agent running on your
 1. **Create a private GitHub repo** for the memory. Name it anything (e.g. `brain-vault`), set it to **Private**, and create it empty (no README).
 2. **Push your vault up.** In Git Bash (or ask Jarvis):
    ```
-   bash /c/Users/RDP/my-agent/port-android/sync-vault-to-git.sh https://github.com/YOURNAME/brain-vault.git
+   bash /c/Users/RDP/my-agent/port-android/sync-vault-to-git.sh https://github.com/bluesuffer0-bit/brain-vault.git
    ```
    The first push opens a GitHub sign-in window — that's Git Credential Manager doing its one-time job.
 3. Have your **B AI API key** handy (the same one the PC uses).
@@ -31,7 +31,7 @@ The Android port of the fullstack-agent stack: your Jarvis agent running on your
 2. **Get `setup-android.sh` onto the phone** — either:
    - from the GitHub repo (if it exists): open Termux and run
      ```
-     curl -fsSL https://raw.githubusercontent.com/YOURNAME/jarvis-android/main/setup-android.sh -o setup-android.sh
+     curl -fsSL https://raw.githubusercontent.com/bluesuffer0-bit/jarvis-android/main/setup-android.sh -o setup-android.sh
      ```
    - or from the zip: send the zip to the phone (email/Drive/USB), extract it with the Files app, and copy `setup-android.sh` into the Downloads folder.
 3. **Run it.** In Termux:
