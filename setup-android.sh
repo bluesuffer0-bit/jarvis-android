@@ -12,9 +12,9 @@ set -e
 
 echo "== Jarvis for Android: bootstrap =="
 
-# Which proot distro to use. Already installed under a custom name?
-# Run the script as:  DISTRO=yourname bash setup-android.sh
-DISTRO="${DISTRO:-ubuntu}"
+# Optional: force a specific proot-distro name (DISTRO=myname bash setup-android.sh).
+# Without it the script auto-detects ANY existing Ubuntu and reuses it as-is.
+DISTRO="${DISTRO:-}"
 
 # --- Termux packages ---
 # Non-interactive and forgiving: an existing Termux install can fail the
@@ -28,17 +28,66 @@ pkg upgrade -y || true
 # Termux:API APP from F-Droid alongside the Termux app itself.
 pkg install -y proot-distro termux-api jq
 
-# --- Ubuntu under proot (real glibc, so the Claude Code binary runs) ---
-# Already have it? It is used AS-IS: nothing is removed, reset, or reinstalled.
-if [ -d "$HOME/../usr/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
-  echo "-- found your existing $DISTRO — using it as-is"
+# --- Find the Ubuntu: use what exists, never reinstall over it ---
+# Detection order: a proot-distro Ubuntu (exact name, then any ubuntu-*
+# alias), then the older ubuntu-fs style rootfs (AnLinux / ubuntu-in-termux
+# installers), and only if nothing exists, a fresh proot-distro install.
+MODE=""
+if [ -n "$DISTRO" ] && [ -d "$HOME/../usr/var/lib/proot-distro/installed-rootfs/$DISTRO" ]; then
+  MODE="proot-distro:$DISTRO"
+  echo "-- found your existing proot-distro '$DISTRO' — using it as-is"
+elif [ -d "$HOME/../usr/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
+  MODE="proot-distro:ubuntu"
+  echo "-- found your existing proot-distro ubuntu — using it as-is"
 else
-  echo "-- installing $DISTRO (about 300 MB, one time)"
-  proot-distro install "$DISTRO"
+  ALIAS=$(proot-distro list 2>/dev/null | awk '
+    /^[A-Za-z0-9._-]+$/ {name=$1; next}
+    tolower($0) ~ /installed/ && tolower($0) !~ /not installed/ && tolower(name) ~ /ubuntu/ {print name; exit}')
+  if [ -n "$ALIAS" ]; then
+    MODE="proot-distro:$ALIAS"
+    echo "-- found your existing proot-distro '$ALIAS' — using it as-is"
+  fi
 fi
-proot-distro login "$DISTRO" -- true 2>/dev/null || {
-  echo "ERROR: proot distro '$DISTRO' is not usable."
-  echo "If your Ubuntu lives under a different name, run:"
+if [ -z "$MODE" ]; then
+  for d in "$HOME"/*-fs "$PREFIX/ubuntu-fs"; do
+    if [ -d "$d" ] && [ -x "$d/bin/bash" ]; then
+      MODE="ubuntu-fs:$d"
+      echo "-- found an ubuntu-fs rootfs at $d — using it as-is"
+      break
+    fi
+  done
+fi
+if [ -z "$MODE" ]; then
+  echo "-- no Ubuntu found. Installing one (about 300 MB, one time)"
+  proot-distro install ubuntu
+  MODE="proot-distro:ubuntu"
+fi
+echo "$MODE" > "$HOME/.jarvis-mode"
+
+# --- jarvis-in: runs one command inside whichever Ubuntu was found ---
+cat > "$HOME/bin/jarvis-in" <<'JIN'
+#!/data/data/com.termux/files/usr/bin/bash
+# Runs one command string inside the Jarvis Ubuntu (either flavor).
+MODE=$(cat "$HOME/.jarvis-mode" 2>/dev/null || echo proot-distro:ubuntu)
+if [ "$MODE" = "${MODE#proot-distro:}" ]; then
+  # ubuntu-fs rootfs: raw proot with the standard binds. The Termux files
+  # bind is what lets the rootfs see the voice bus and the inner script.
+  FS="${MODE#ubuntu-fs:}"
+  BINDS=""
+  for d in /dev /proc /sys /sdcard /storage /data/data/com.termux/files; do
+    [ -e "$d" ] && BINDS="$BINDS -b $d"
+  done
+  exec proot --link2symlink -0 -r "$FS" $BINDS -w /root \
+    /usr/bin/env -i HOME=/root TERM="${TERM:-xterm-256color}" \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LANG=C.UTF-8 /bin/bash -c "$1"
+fi
+exec proot-distro login "${MODE#proot-distro:}" -- bash -c "$1"
+JIN
+chmod +x "$HOME/bin/jarvis-in"
+bash "$HOME/bin/jarvis-in" 'echo ok' >/dev/null 2>&1 || {
+  echo "ERROR: the Ubuntu at '$MODE' did not start."
+  echo "If it is a proot-distro distro under another name, run:"
   echo "  DISTRO=<name> bash setup-android.sh"
   exit 1
 }
@@ -167,20 +216,20 @@ fi
 echo "== Ubuntu side done =="
 INNER
 
-# --- run the inner script inside Ubuntu ---
-# Termux's home is bound at its absolute path inside proot, so the full
-# path reaches the file; ~ inside the distro is /root, not Termux home.
-proot-distro login "$DISTRO" -- bash "/data/data/com.termux/files/home/jarvis-inner.sh"
+# --- run the inner script inside the found Ubuntu ---
+# Termux's home is bound inside proot (auto for proot-distro, explicit for
+# ubuntu-fs), so the absolute path reaches the file either way.
+bash "$HOME/bin/jarvis-in" 'bash /data/data/com.termux/files/home/jarvis-inner.sh'
 
 # --- Termux-side launchers: type `jarvis` or `jarvis-face` in Termux ---
 mkdir -p "$HOME/bin"
 cat > "$HOME/bin/jarvis" <<'LAUNCH'
 #!/data/data/com.termux/files/usr/bin/bash
-proot-distro login ubuntu -- bash -c 'source ~/.jarvis.env && export PATH="$HOME/.local/bin:$PATH" && cd ~/my-agent && claude'
+bash "$HOME/bin/jarvis-in" 'source ~/.jarvis.env && export PATH="$HOME/.local/bin:$PATH" && cd ~/my-agent && exec claude'
 LAUNCH
 cat > "$HOME/bin/jarvis-face" <<'LAUNCHF'
 #!/data/data/com.termux/files/usr/bin/bash
-proot-distro login ubuntu -- bash -c 'cd ~/my-agent/ai-visualizer && python3 server.py' &
+bash "$HOME/bin/jarvis-in" 'cd ~/my-agent/ai-visualizer && exec python3 server.py' &
 sleep 2
 termux-open-url "http://127.0.0.1:8790/faces/board/" 2>/dev/null || \
   xdg-open "http://127.0.0.1:8790/faces/board/" 2>/dev/null || \
@@ -201,7 +250,6 @@ cat > "$HOME/bin/jarvis-voice" <<'LAUNCHV'
 # Mouth: ElevenLabs if your key is in ~/.jarvis.env, else Android TTS.
 # Requires the Termux:API app from F-Droid.
 set -u
-DISTRO="${DISTRO:-ubuntu}"
 BUS="$HOME/voice-bus"
 TMP="$(mktemp -d)"
 mkdir -p "$BUS"
@@ -209,8 +257,8 @@ bus(){ printf '%s' "$1" > "$BUS/.voice_state"; }
 trap 'bus idle; echo; echo "voice line closed."; exit 0' INT TERM
 
 # The ElevenLabs key lives in ONE place: ~/.jarvis.env inside Ubuntu.
-KEY=$(proot-distro login "$DISTRO" -- bash -c 'source ~/.jarvis.env 2>/dev/null; printf %s "${ELEVENLABS_API_KEY:-}"' 2>/dev/null)
-VOICE=$(proot-distro login "$DISTRO" -- bash -c 'source ~/.jarvis.env 2>/dev/null; printf %s "${ELEVENLABS_VOICE_ID:-pNInz6obpgDQGcFmaJgB}"' 2>/dev/null)
+KEY=$(bash "$HOME/bin/jarvis-in" 'source ~/.jarvis.env 2>/dev/null; printf %s "${ELEVENLABS_API_KEY:-}"' 2>/dev/null)
+VOICE=$(bash "$HOME/bin/jarvis-in" 'source ~/.jarvis.env 2>/dev/null; printf %s "${ELEVENLABS_VOICE_ID:-pNInz6obpgDQGcFmaJgB}"' 2>/dev/null)
 
 speak(){
   text="$1"
@@ -249,7 +297,7 @@ while true; do
     exit 0
   fi
   bus thinking
-  REPLY=$(printf '%s' "$TEXT" | proot-distro login "$DISTRO" -- bash -c \
+  REPLY=$(printf '%s' "$TEXT" | bash "$HOME/bin/jarvis-in" \
     'source ~/.jarvis.env && export PATH="$HOME/.local/bin:$PATH" && cd ~/my-agent && exec claude -p --permission-mode bypassPermissions' 2>/dev/null)
   [ -z "$REPLY" ] && REPLY="My brain did not answer, sir. Open the typed line with jarvis once, so Claude finishes its first-run setup, then come back."
   bus speaking

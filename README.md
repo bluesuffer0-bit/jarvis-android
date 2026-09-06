@@ -38,7 +38,7 @@ The Android port of the fullstack-agent stack: your Jarvis agent running on your
    termux-setup-storage
    bash ~/storage/downloads/setup-android.sh
    ```
-   Approve the storage permission, then let it work. It installs Ubuntu (about 300 MB), then Claude Code, the boot config, the vault, and the face — all by itself.
+   Approve the storage permission, then let it work. **Already running Ubuntu in Termux?** It gets detected and used as-is — proot-distro Ubuntu (any name) and the older ubuntu-fs rootfs (AnLinux / ubuntu-in-termux style) both count; nothing is reinstalled and nothing of yours is touched. Forcing a specific proot-distro name: `DISTRO=<name> bash ~/storage/downloads/setup-android.sh`. It installs Ubuntu (about 300 MB), then Claude Code, the boot config, the vault, and the face — all by itself.
 4. **Paste your API key** — the only hands-on step. The script prints this when it finishes:
    ```
    proot-distro login ubuntu
