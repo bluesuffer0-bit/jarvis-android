@@ -23,7 +23,10 @@ DISTRO="${DISTRO:-ubuntu}"
 export DEBIAN_FRONTEND=noninteractive
 pkg update -y || true
 pkg upgrade -y || true
-pkg install -y proot-distro
+# termux-api: the phone's native ears (speech-to-text) and media player.
+# jq: safe JSON building for the ElevenLabs call. Both need the
+# Termux:API APP from F-Droid alongside the Termux app itself.
+pkg install -y proot-distro termux-api jq
 
 # --- Ubuntu under proot (real glibc, so the Claude Code binary runs) ---
 # Already have it? It is used AS-IS: nothing is removed, reset, or reinstalled.
@@ -123,17 +126,23 @@ BOOT
   echo "-- wrote the boot config"
 fi
 
-# --- the face config (standalone demo mode; no voice bus on a phone) ---
+# --- the face config: bus_dir points at the folder the voice line writes ---
+mkdir -p /data/data/com.termux/files/home/voice-bus 2>/dev/null || true
 cat > ~/my-agent/ai-visualizer/ai-visualizer.json <<'VIS'
 {
   "name": "Jarvis",
   "badge": "",
   "face": "board",
   "port": 8790,
-  "bus_dir": "",
+  "bus_dir": "/data/data/com.termux/files/home/voice-bus",
   "thinking_sound": true
 }
 VIS
+
+# --- pre-seed Claude's first-run flag so 'claude -p' works headlessly ---
+if [ ! -f ~/.claude.json ]; then
+  printf '{"hasCompletedOnboarding": true}\n' > ~/.claude.json
+fi
 
 # --- the env file: YOU paste your key here (never us) ---
 if [ ! -f ~/.jarvis.env ]; then
@@ -182,11 +191,84 @@ chmod +x "$HOME/bin/jarvis" "$HOME/bin/jarvis-face"
 grep -q 'PATH="$HOME/bin' "$HOME/.bashrc" 2>/dev/null || \
   echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
 
+# --- the walkie-talkie voice line (Termux side; see README) ---
+mkdir -p "$HOME/voice-bus"
+cat > "$HOME/bin/jarvis-voice" <<'LAUNCHV'
+#!/data/data/com.termux/files/usr/bin/bash
+# Jarvis for Android: walkie-talkie voice.
+# Ears: Termux:API speech-to-text (the Google dialog pops each turn).
+# Brain: claude in proot, on your B AI provider, with the shared vault.
+# Mouth: ElevenLabs if your key is in ~/.jarvis.env, else Android TTS.
+# Requires the Termux:API app from F-Droid.
+set -u
+DISTRO="${DISTRO:-ubuntu}"
+BUS="$HOME/voice-bus"
+TMP="$(mktemp -d)"
+mkdir -p "$BUS"
+bus(){ printf '%s' "$1" > "$BUS/.voice_state"; }
+trap 'bus idle; echo; echo "voice line closed."; exit 0' INT TERM
+
+# The ElevenLabs key lives in ONE place: ~/.jarvis.env inside Ubuntu.
+KEY=$(proot-distro login "$DISTRO" -- bash -c 'source ~/.jarvis.env 2>/dev/null; printf %s "${ELEVENLABS_API_KEY:-}"' 2>/dev/null)
+VOICE=$(proot-distro login "$DISTRO" -- bash -c 'source ~/.jarvis.env 2>/dev/null; printf %s "${ELEVENLABS_VOICE_ID:-pNInz6obpgDQGcFmaJgB}"' 2>/dev/null)
+
+speak(){
+  text="$1"
+  if [ -n "$KEY" ] && [ "$KEY" != "PASTE-YOUR-KEY" ]; then
+    curl -s --max-time 40 -o "$TMP/reply.mp3" -X POST \
+      "https://api.elevenlabs.io/v1/text-to-speech/$VOICE" \
+      -H "xi-api-key: $KEY" -H "content-type: application/json" \
+      -d "$(jq -cn --arg t "$text" '{text:$t, model_id:"eleven_turbo_v2_5"}')" 2>/dev/null
+    if [ -s "$TMP/reply.mp3" ] && ! grep -q "detail" "$TMP/reply.mp3" 2>/dev/null; then
+      termux-media-player stop >/dev/null 2>&1
+      termux-media-player play "$TMP/reply.mp3" >/dev/null 2>&1
+      # hold "speaking" on the face for a rough estimate of the clip length
+      sleep "$(awk -v n="${#text}" 'BEGIN{printf "%d", n/13+2}')"
+      termux-media-player stop >/dev/null 2>&1
+      return 0
+    fi
+  fi
+  termux-tts-speak "$text" 2>/dev/null && sleep 2
+  return 0
+}
+
+bus idle
+echo "Jarvis voice line. Ctrl-C hangs up. Start 'jarvis-face' in a second"
+echo "Termux window and the circuit board follows this conversation."
+speak "Hello max, what are we working on today?"
+while true; do
+  bus listening
+  printf '\nlistening — speak into the Google dialog\n'
+  TEXT=$(termux-speech-to-text 2>/dev/null)
+  [ -z "$TEXT" ] && { bus idle; continue; }
+  echo "you: $TEXT"
+  if printf '%s' "$TEXT" | grep -qi "goodbye"; then
+    bus speaking
+    speak "Until next time, sir."
+    bus idle
+    exit 0
+  fi
+  bus thinking
+  REPLY=$(printf '%s' "$TEXT" | proot-distro login "$DISTRO" -- bash -c \
+    'source ~/.jarvis.env && export PATH="$HOME/.local/bin:$PATH" && cd ~/my-agent && exec claude -p --permission-mode bypassPermissions' 2>/dev/null)
+  [ -z "$REPLY" ] && REPLY="My brain did not answer, sir. Open the typed line with jarvis once, so Claude finishes its first-run setup, then come back."
+  bus speaking
+  echo "jarvis: $REPLY"
+  speak "$REPLY"
+  bus idle
+done
+LAUNCHV
+chmod +x "$HOME/bin/jarvis-voice"
+
 echo ""
 echo "== Jarvis for Android is installed =="
 echo ""
 echo "Remaining steps (once):"
-echo "  1. nano ~/.jarvis.env   (inside Ubuntu: proot-distro login ubuntu first)"
-echo "     -> replace PASTE-YOUR-KEY with your real key"
-echo "  2. restart Termux, then type:  jarvis        (typed chat)"
+echo "  1. INSTALL THE TERMUX:API APP from F-Droid (the voice needs it):"
+echo "     https://f-droid.org/en/packages/com.termux.api/"
+echo "  2. nano ~/.jarvis.env   (inside Ubuntu: proot-distro login ubuntu first)"
+echo "     -> replace PASTE-YOUR-KEY with your real B AI key"
+echo "     -> optional: add  export ELEVENLABS_API_KEY=\"...\"  for the natural voice"
+echo "  3. restart Termux, then type:  jarvis        (typed chat)"
 echo "                                jarvis-face   (the circuit board in your browser)"
+echo "                                jarvis-voice  (walkie-talkie voice; face follows)"

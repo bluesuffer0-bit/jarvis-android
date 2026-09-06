@@ -6,9 +6,8 @@ The Android port of the fullstack-agent stack: your Jarvis agent running on your
 
 - **Typed Jarvis** — Claude Code inside Termux, on your B AI provider (`glm-5.3-flash`), booting from the same Jarvis identity.
 - **Shared memory** — the Brain vault syncs through a private GitHub repo, so phone-Jarvis and PC-Jarvis are one brain, not two.
-- **The face** — `jarvis-face` starts the visualizer server and opens the board in your browser.
-
-**What does not:** the voice. Not with ElevenLabs either — the phone lacks the audio plumbing (mic capture and playback through Termux's Linux layer) and the speech-to-text model that has to hear you before Jarvis can answer. Voice happens at the desk; the phone gets a fully typed Jarvis. (A real phone voice is a custom build, not a port — ask PC-Jarvis about it as a project if you ever want it.)
+- **The face** — `jarvis-face` starts the visualizer server and opens the board in your browser, wired to the same signal bus the voice writes.
+- **The voice (walkie-talkie)** — `jarvis-voice`: Android's speech recognition for ears, claude for the brain, ElevenLabs for the mouth (falls back to Android's built-in voice without a key). Say something, Jarvis answers out loud, and the circuit board follows along. Honest limits: it is push-to-talk, not ambient — a Google dialog pops each turn instead of always listening, and it cannot be interrupted mid-sentence. The PC's backtalk stays the premium voice experience; this is the phone-grade version.
 
 **Requirements:** an Android phone (64-bit — every phone from roughly 2018 onward), about 1 GB of storage, and internet.
 
@@ -53,6 +52,8 @@ The Android port of the fullstack-agent stack: your Jarvis agent running on your
 ## Part C — daily use
 
 - **Typed chat:** open Termux, type `jarvis`. Same personality, same memory, same model as the PC.
+- **Voice:** install the **Termux:API app** from F-Droid first (https://f-droid.org/en/packages/com.termux.api/ — the plugin app that hands Termux the mic and speaker), then type `jarvis-voice`. He greets you out loud; each turn pops a Google listening dialog; his reply comes through the speaker (ElevenLabs if you put `export ELEVENLABS_API_KEY="..."` in `~/.jarvis.env`, Android's voice otherwise). Say "goodbye" to hang up. Run `jarvis-face` in a second Termux session and the circuit board follows the conversation live.
+  One honest tradeoff baked in: the voice line runs Claude with auto-approved permissions (it cannot stop and ask mid-walkie-talkie). Its blast radius is the phone's own Ubuntu sandbox — your Android files stay outside it. The typed line still behaves like the PC.
 - **Memory sync:** phone-Jarvis pulls the vault when a session starts and pushes after it writes (the boot config tells him how — `git pull`/`git push` in `~/Brain`). On the PC, run the sync script (or ask Jarvis) to push your latest vault before long phone sessions and after PC ones. Conflicts are rare and Jarvis can reconcile them.
 - **Stopping things:** Ctrl-C in Termux stops whatever is running; closing the Termux window stops everything.
 - **Updating:** delete nothing; re-run `setup-android.sh` — it is safe to re-run and only fills in what is missing.
